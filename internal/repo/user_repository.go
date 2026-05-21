@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type UserRepository interface {
 	// Define methods for user repository here
 	GetUser(id string) (*model.User, error)
+	UpdateUserStatus(userID string, status string) error
 }
 
 type userRepository struct {
@@ -40,4 +42,12 @@ func (r *userRepository) GetUser(id string) (*model.User, error) {
 	fmt.Println("Client found with ID:", result.ID)
 
 	return result, nil
+}
+
+func (r *userRepository) UpdateUserStatus(userID string, status string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	_, err := r.mongoRepo.Update(ctx, bson.M{"user_id": userID}, bson.M{"status": status})
+	return err
 }

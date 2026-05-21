@@ -9,6 +9,7 @@ const (
 	EventMarkDelivered = "mark_delivered"
 	EventMarkSeen      = "mark_seen"
 	EventTyping        = "typing"
+	EventUpdateStatus  = "update_status"
 	HeartBeat          = "heartbeat" // Client sends this periodically to prove it's alive
 
 	// Server -> Client
@@ -17,6 +18,7 @@ const (
 	EventDelivered   = "delivered"
 	EventSeen        = "seen"
 	EventUserTyping  = "user_typing"
+	EventUserStatus  = "user_status"
 	EventError       = "error"
 	Direct           = "direct"
 	Group            = "group"

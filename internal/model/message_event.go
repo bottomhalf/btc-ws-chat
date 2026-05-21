@@ -30,3 +30,9 @@ type TypingIndicator struct {
 type PingIndicator struct {
 	UserID string `json:"userId"`
 }
+
+// UserStatus - for user online status updates
+type UserStatus struct {
+	UserID string `json:"userId"`
+	Status string `json:"status"`
+}
