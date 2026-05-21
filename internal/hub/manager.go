@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 const (
@@ -120,7 +121,6 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 	)
 
 	// Register message handlers
-	h.registry.Register(NewSendMessageHandler(messageRepo, conversationRepo))
 	h.registry.Register(NewMarkDeliveredHandler(conversationRepo))
 	h.registry.Register(NewTypingHandler())
 	h.registry.Register(NewUpdateStatusHandler(userRepository))
@@ -176,6 +176,68 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 }
 
 func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
+	if ev.Event == event.EventSendMessage {
+		var message model.Message
+		if err := json.Unmarshal(ev.Payload, &message); err != nil {
+			log.Printf("failed to unmarshal client message: %v", err)
+			h.sendErrorToClient(c, "invalid_message", "Failed to parse message")
+			return
+		}
+
+		// Get conversation ID from the message
+		conversationID := message.ConversationID.Hex()
+		if conversationID == "" || conversationID == "000000000000000000000000" {
+			h.sendErrorToClient(c, "invalid_message", "ConversationID is required")
+			return
+		}
+
+		log.Printf("New message from %s in conversation %s: %s\n", message.SenderID, conversationID, message.Body)
+		message.Status = model.MESSAGE_SENT
+
+		// Save message to MongoDB before publishing
+		ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
+		insertedID, err := h.messageRepo.InsertMessage(ctx, &message)
+		cancel()
+
+		if err != nil {
+			log.Printf("failed to save message to MongoDB: %v", err)
+			h.sendErrorToClient(c, "save_failed", "Failed to save message, please retry")
+			return
+		}
+
+		id, err := primitive.ObjectIDFromHex(insertedID)
+		if err != nil {
+			log.Printf("failed to convert inserted ID to ObjectID: %v", err)
+			h.sendErrorToClient(c, "save_failed", "Failed to save message, please retry")
+			return
+		}
+
+		message.ID = id
+		var lastMessage = &model.LastMessage{
+			MessageId: insertedID,
+			Content:   message.Body,
+			SenderId:  message.SenderID,
+			SentAt:    time.Now(),
+		}
+		// Save message to MongoDB before publishing
+		ctx, cancel = context.WithTimeout(h.ctx, 5*time.Second)
+		err = h.conversationRepo.UpdateLastMessage(ctx, message.ConversationID.Hex(), lastMessage)
+		cancel()
+
+		if err != nil {
+			log.Printf("failed to save message to MongoDB: %v", err)
+			h.sendErrorToClient(c, "save_failed", "Failed to save message, please retry")
+			return
+		}
+
+		log.Printf("Message saved to MongoDB with ID: %s", insertedID)
+
+		ev.Payload, _ = json.Marshal(message)
+		ev.Event = event.EventNewMessage
+		h.publishToRoom(ev, conversationID)
+		return
+	}
+
 	ctx := &EventContext{
 		Event:  ev,
 		Client: c,
