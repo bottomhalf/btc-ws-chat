@@ -78,6 +78,7 @@ type Hub struct {
 	onlineUsers   map[string]*Client
 	onlineUsersMu sync.RWMutex
 	callHandler   *CallHandler
+	registry      *HandlerRegistry
 
 	register   chan *Client
 	unregister chan *Client
@@ -111,6 +112,31 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 	// Initialize call handler with hub reference
 	h.callHandler = NewCallHandler()
 	h.callHandler.SetHub(h)
+
+	// Initialize handler registry with middleware pipeline
+	h.registry = NewHandlerRegistry()
+	h.registry.Use(
+		RecoveryMiddleware(),
+		LoggingMiddleware(),
+	)
+
+	// Register message handlers
+	h.registry.Register(NewMarkDeliveredHandler(conversationRepo))
+	h.registry.Register(NewTypingHandler())
+	h.registry.Register(NewUpdateStatusHandler(userRepository))
+	h.registry.Register(NewHeartbeatHandler())
+
+	// Register call handlers
+	h.registry.Register(NewCallInitiateHandler(h.callHandler))
+	h.registry.Register(NewCallStartedHandler(h.callHandler))
+	h.registry.Register(NewCallAcceptHandler(h.callHandler))
+	h.registry.Register(NewCallRejectHandler(h.callHandler))
+	h.registry.Register(NewCallDismissHandler(h.callHandler))
+	h.registry.Register(NewCallCancelHandler(h.callHandler))
+	h.registry.Register(NewCallTimeoutHandler(h.callHandler))
+	h.registry.Register(NewCallEndHandler(h.callHandler))
+	h.registry.Register(NewJoiningRequestHandler(h.callHandler))
+	h.registry.Register(NewGroupNotificationHandler(h.callHandler))
 
 	for i := 0; i < shardCount; i++ {
 		h.shards[i] = &roomBucket{
@@ -150,14 +176,7 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 }
 
 func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
-	// Route call events to CallHandler
-	if IsCallEvent(ev.Event) {
-		h.callHandler.HandleCallEvent(ev, c)
-		return
-	}
-
-	switch ev.Event {
-	case event.EventSendMessage:
+	if ev.Event == event.EventSendMessage {
 		var message model.Message
 		if err := json.Unmarshal(ev.Payload, &message); err != nil {
 			log.Printf("failed to unmarshal client message: %v", err)
@@ -216,64 +235,16 @@ func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
 		ev.Payload, _ = json.Marshal(message)
 		ev.Event = event.EventNewMessage
 		h.publishToRoom(ev, conversationID)
+		return
+	}
 
-	case event.EventMarkDelivered:
-		var deliver model.MessageDelivered
-		if err := json.Unmarshal(ev.Payload, &deliver); err != nil {
-			log.Printf("failed to unmarshal delivery indicator: %v", err)
-			return
-		}
-
-		if deliver.ConversationID == "" {
-			return
-		}
-
-		deliver.Status = model.MESSAGE_DELIVERED
-
-		ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
-		err := h.conversationRepo.UpdateMessageDelivery(ctx, deliver)
-		cancel()
-
-		if err != nil {
-			log.Printf("failed to save message to MongoDB: %v", err)
-			h.sendErrorToClient(c, "save_failed", "Failed to save message, please retry")
-			return
-		}
-
-		log.Printf("Message %s is delivered in conversation %s\n", deliver.Id, deliver.ConversationID)
-
-		ev.Event = event.EventDelivered
-		h.publishToRoom(ev, deliver.ConversationID)
-
-	case event.EventTyping:
-		var typing model.TypingIndicator
-		if err := json.Unmarshal(ev.Payload, &typing); err != nil {
-			log.Printf("failed to unmarshal typing indicator: %v", err)
-			return
-		}
-
-		if typing.ConversationID == "" {
-			return
-		}
-
-		log.Printf("User %s is typing in conversation %s\n", typing.UserID, typing.ConversationID)
-
-		ev.Event = event.EventTyping
-		h.publishToRoom(ev, typing.ConversationID)
-
-	case event.HeartBeat:
-		// Client is proving it's alive - update lastSeen timestamp
-		var ping model.PingIndicator
-		if err := json.Unmarshal(ev.Payload, &ping); err != nil {
-			log.Printf("failed to unmarshal ping indicator: %v", err)
-			return
-		}
-		log.Printf("Ping from: %s", ping.UserID)
-		c.UpdateLastSeen()
-		// No response needed - this is a one-way heartbeat
-
-	default:
-		log.Printf("unknown event type: %s", ev.Event)
+	ctx := &EventContext{
+		Event:  ev,
+		Client: c,
+		hub:    h,
+	}
+	if err := h.registry.Dispatch(ctx); err != nil {
+		log.Printf("event dispatch error for %s: %v", ev.Event, err)
 	}
 }
 
@@ -321,6 +292,23 @@ func (h *Hub) publishToRoom(ev event.WsEvent, groupConversationID string) {
 	}
 
 	log.Printf("message published to %d/%d members in room %s", len(onlineClients), len(memberIDs), groupConversationID)
+}
+
+// broadcastToAll sends an event to all ONLINE users connected to the hub
+func (h *Hub) broadcastToAll(ev event.WsEvent) {
+	h.onlineUsersMu.RLock()
+	onlineClients := make([]*Client, 0, len(h.onlineUsers))
+	for _, client := range h.onlineUsers {
+		onlineClients = append(onlineClients, client)
+	}
+	h.onlineUsersMu.RUnlock()
+
+	// Deliver to online clients without holding lock
+	for _, client := range onlineClients {
+		client.SafeSend(ev, sendTimeout)
+	}
+
+	log.Printf("event %s broadcasted to all %d online users", ev.Event, len(onlineClients))
 }
 
 func (h *Hub) GetRoom(conversationID string) *Room {
@@ -562,6 +550,41 @@ func (h *Hub) addClient(c *Client) {
 	h.onlineUsersMu.Unlock()
 
 	log.Printf("client %s (user: %s) added to online users", c.ID, c.userId)
+
+	// Update status to online in DB
+	if err := h.userRepository.UpdateUserStatus(c.userId, "online"); err != nil {
+		log.Printf("failed to update user status to online in DB: %v", err)
+	}
+
+	// Broadcast online status to all other online users
+	statusUpdate := model.UserStatus{
+		UserID: c.userId,
+		Status: "online",
+	}
+	payload, _ := json.Marshal(statusUpdate)
+	ev := event.WsEvent{
+		Event:   event.EventUserStatus,
+		Payload: payload,
+	}
+	h.broadcastToAll(ev)
+
+	// Send existing online users' statuses to the newly connected client
+	h.onlineUsersMu.RLock()
+	for _, existingClient := range h.onlineUsers {
+		if existingClient.userId != c.userId {
+			update := model.UserStatus{
+				UserID: existingClient.userId,
+				Status: existingClient.GetStatus(),
+			}
+			p, _ := json.Marshal(update)
+			e := event.WsEvent{
+				Event:   event.EventUserStatus,
+				Payload: p,
+			}
+			c.SafeSend(e, sendTimeout)
+		}
+	}
+	h.onlineUsersMu.RUnlock()
 }
 
 func (h *Hub) Stop() {
@@ -585,6 +608,23 @@ func (h *Hub) removeClient(c *Client) {
 	if existing, ok := h.onlineUsers[c.userId]; ok && existing.ID == c.ID {
 		delete(h.onlineUsers, c.userId)
 		log.Printf("REMOVED: client %s (user: %s) - count now: %d", c.ID, c.userId, len(h.onlineUsers))
+
+		// Update status to offline in DB
+		if err := h.userRepository.UpdateUserStatus(c.userId, "offline"); err != nil {
+			log.Printf("failed to update user status to offline in DB: %v", err)
+		}
+
+		// Broadcast offline status to all other online users
+		statusUpdate := model.UserStatus{
+			UserID: c.userId,
+			Status: "offline",
+		}
+		payload, _ := json.Marshal(statusUpdate)
+		ev := event.WsEvent{
+			Event:   event.EventUserStatus,
+			Payload: payload,
+		}
+		h.broadcastToAll(ev)
 	} else {
 		log.Printf("SKIP REMOVE: client %s (user: %s) - different client active", c.ID, c.userId)
 	}

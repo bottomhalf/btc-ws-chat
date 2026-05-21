@@ -31,33 +31,6 @@ func (ch *CallHandler) SetHub(hub *Hub) {
 	ch.hub = hub
 }
 
-// HandleCallEvent processes call-related WebSocket events
-func (ch *CallHandler) HandleCallEvent(ev event.WsEvent, c *Client) {
-	switch ev.Event {
-	case event.EventCallInitiate:
-		ch.handleCallInitiate(ev, c, false)
-	case event.EventCallAccept:
-		ch.handleCallAccept(ev, c)
-	case event.EventCallReject:
-		ch.handleCallReject(ev, c)
-	case event.EventCallDismiss:
-		ch.handleCallDismiss(ev, c)
-	case event.EventCallCancel:
-		ch.handleCallCancel(ev, c)
-	case event.EventCallTimeout:
-		ch.handleCallTimeout(ev, c)
-	case event.EventCallEnd:
-		ch.handleCallEnd(ev, c)
-	case event.EventCallStarted:
-		ch.handleCallInitiate(ev, c, true)
-	case event.EventJoiningRequest:
-		ch.raiseJoiningRequest(ev, c)
-	case event.EventSendGroupNotification:
-		ch.sendGroupNotification(ev, c)
-	default:
-		log.Printf("unknown call event type: %s", ev.Event)
-	}
-}
 
 // sendGroupNotification sends a notification to all room participants except the sender
 func (ch *CallHandler) sendGroupNotification(ev event.WsEvent, c *Client) {
@@ -660,21 +633,3 @@ func (ch *CallHandler) handleCallEnd(ev event.WsEvent, c *Client) {
 	}
 }
 
-// IsCallEvent checks if an event is a call-related event
-func IsCallEvent(eventType string) bool {
-	switch eventType {
-	case event.EventCallInitiate,
-		event.EventCallAccept,
-		event.EventCallReject,
-		event.EventCallCancel,
-		event.EventCallTimeout,
-		event.EventCallStarted,
-		event.EventCallDismiss,
-		event.EventCallEnd,
-		event.EventSendGroupNotification,
-		event.EventJoiningRequest:
-		return true
-	default:
-		return false
-	}
-}
