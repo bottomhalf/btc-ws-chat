@@ -4,6 +4,7 @@ import (
 	"Confeet/internal/db"
 	"Confeet/internal/handler"
 	"Confeet/internal/hub"
+	"Confeet/internal/hub/handlers"
 	"Confeet/internal/model"
 	"Confeet/internal/repo"
 	"Confeet/internal/service"
@@ -59,6 +60,25 @@ func BuildContainer() (*Container, error) {
 
 	// Create Hub with repositories
 	Hub := hub.NewHub(messageRepo, conversationRepo, userRepo)
+
+	// Register message handlers
+	Hub.RegisterHandler(handlers.NewMarkDeliveredHandler(conversationRepo))
+	Hub.RegisterHandler(handlers.NewTypingHandler())
+	Hub.RegisterHandler(handlers.NewUpdateStatusHandler(userRepo))
+	Hub.RegisterHandler(handlers.NewHeartbeatHandler())
+
+	// Register call handlers
+	ch := Hub.CallHandler()
+	Hub.RegisterHandler(handlers.NewCallInitiateHandler(ch))
+	Hub.RegisterHandler(handlers.NewCallStartedHandler(ch))
+	Hub.RegisterHandler(handlers.NewCallAcceptHandler(ch))
+	Hub.RegisterHandler(handlers.NewCallRejectHandler(ch))
+	Hub.RegisterHandler(handlers.NewCallDismissHandler(ch))
+	Hub.RegisterHandler(handlers.NewCallCancelHandler(ch))
+	Hub.RegisterHandler(handlers.NewCallTimeoutHandler(ch))
+	Hub.RegisterHandler(handlers.NewCallEndHandler(ch))
+	Hub.RegisterHandler(handlers.NewJoiningRequestHandler(ch))
+	Hub.RegisterHandler(handlers.NewGroupNotificationHandler(ch))
 
 	return &Container{
 		UserHandler: userHandler,

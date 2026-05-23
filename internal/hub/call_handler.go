@@ -32,8 +32,8 @@ func (ch *CallHandler) SetHub(hub *Hub) {
 }
 
 
-// sendGroupNotification sends a notification to all room participants except the sender
-func (ch *CallHandler) sendGroupNotification(ev event.WsEvent, c *Client) {
+// SendGroupNotification sends a notification to all room participants except the sender
+func (ch *CallHandler) SendGroupNotification(ev event.WsEvent, c *Client) {
 	var payload model.GroupNotificationPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal group notification payload: %v", err)
@@ -74,8 +74,8 @@ func (ch *CallHandler) sendGroupNotification(ev event.WsEvent, c *Client) {
 	ch.sendNotification(payload.ConversationID, payload.NotificationType, members)
 }
 
-// handleCallInitiate processes a call initiation request
-func (ch *CallHandler) raiseJoiningRequest(ev event.WsEvent, c *Client) {
+// RaiseJoiningRequest processes a call joining request
+func (ch *CallHandler) RaiseJoiningRequest(ev event.WsEvent, c *Client) {
 	var payload model.CallInitiatePayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call initiate payload: %v", err)
@@ -154,8 +154,8 @@ func (ch *CallHandler) raiseJoiningRequest(ev event.WsEvent, c *Client) {
 	ch.notifyCallee(activeCall, c.userId)
 }
 
-// handleCallInitiate processes a call initiation request
-func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client, isJoinRequest bool) {
+// HandleCallInitiate processes a call initiation request
+func (ch *CallHandler) HandleCallInitiate(ev event.WsEvent, c *Client, isJoinRequest bool) {
 	var payload model.CallInitiatePayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call initiate payload: %v", err)
@@ -263,8 +263,8 @@ func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client, isJoinReq
 	ch.notifyCallees(activeCall, c.userId, isJoinRequest)
 }
 
-// handleCallAccept processes a call acceptance
-func (ch *CallHandler) handleCallAccept(ev event.WsEvent, c *Client) {
+// HandleCallAccept processes a call acceptance
+func (ch *CallHandler) HandleCallAccept(ev event.WsEvent, c *Client) {
 	var payload model.CallAcceptPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call accept payload: %v", err)
@@ -352,8 +352,8 @@ func (ch *CallHandler) handleCallAccept(ev event.WsEvent, c *Client) {
 	activeCall.Mu.RUnlock()
 }
 
-// handleCallReject processes a call rejection
-func (ch *CallHandler) handleCallReject(ev event.WsEvent, c *Client) {
+// HandleCallReject processes a call rejection
+func (ch *CallHandler) HandleCallReject(ev event.WsEvent, c *Client) {
 	var payload model.CallRejectPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call reject payload: %v", err)
@@ -410,8 +410,8 @@ func (ch *CallHandler) handleCallReject(ev event.WsEvent, c *Client) {
 	}
 }
 
-// handleCallDismiss processes a call rejection
-func (ch *CallHandler) handleCallDismiss(ev event.WsEvent, c *Client) {
+// HandleCallDismiss processes a call rejection
+func (ch *CallHandler) HandleCallDismiss(ev event.WsEvent, c *Client) {
 	var payload model.CallDismissPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call dismiss payload: %v", err)
@@ -450,8 +450,8 @@ func (ch *CallHandler) handleCallDismiss(ev event.WsEvent, c *Client) {
 	ch.notifyCallDismissed(payload.ConversationID, payload.CallerID, c.userId, payload.Reason)
 }
 
-// handleCallCancel processes a call cancellation by caller
-func (ch *CallHandler) handleCallCancel(ev event.WsEvent, c *Client) {
+// HandleCallCancel processes a call cancellation by caller
+func (ch *CallHandler) HandleCallCancel(ev event.WsEvent, c *Client) {
 	var payload model.CallCancelPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call cancel payload: %v", err)
@@ -486,8 +486,8 @@ func (ch *CallHandler) handleCallCancel(ev event.WsEvent, c *Client) {
 	ch.endCall(activeCall, event.CallEndReasonCancelled)
 }
 
-// handleCallTimeout processes a call timeout from callee
-func (ch *CallHandler) handleCallTimeout(ev event.WsEvent, c *Client) {
+// HandleCallTimeout processes a call timeout from callee
+func (ch *CallHandler) HandleCallTimeout(ev event.WsEvent, c *Client) {
 	var payload model.CallTimeoutPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call timeout payload: %v", err)
@@ -542,8 +542,8 @@ func (ch *CallHandler) handleCallTimeout(ev event.WsEvent, c *Client) {
 	}
 }
 
-// handleCallEnd processes a call end request (participant leaving or ending call)
-func (ch *CallHandler) handleCallEnd(ev event.WsEvent, c *Client) {
+// HandleCallEnd processes a call end request (participant leaving or ending call)
+func (ch *CallHandler) HandleCallEnd(ev event.WsEvent, c *Client) {
 	var payload model.CallEndPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call end payload: %v", err)

@@ -120,23 +120,7 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 		LoggingMiddleware(),
 	)
 
-	// Register message handlers
-	h.registry.Register(NewMarkDeliveredHandler(conversationRepo))
-	h.registry.Register(NewTypingHandler())
-	h.registry.Register(NewUpdateStatusHandler(userRepository))
-	h.registry.Register(NewHeartbeatHandler())
-
-	// Register call handlers
-	h.registry.Register(NewCallInitiateHandler(h.callHandler))
-	h.registry.Register(NewCallStartedHandler(h.callHandler))
-	h.registry.Register(NewCallAcceptHandler(h.callHandler))
-	h.registry.Register(NewCallRejectHandler(h.callHandler))
-	h.registry.Register(NewCallDismissHandler(h.callHandler))
-	h.registry.Register(NewCallCancelHandler(h.callHandler))
-	h.registry.Register(NewCallTimeoutHandler(h.callHandler))
-	h.registry.Register(NewCallEndHandler(h.callHandler))
-	h.registry.Register(NewJoiningRequestHandler(h.callHandler))
-	h.registry.Register(NewGroupNotificationHandler(h.callHandler))
+	// Handlers are registered externally at startup
 
 	for i := 0; i < shardCount; i++ {
 		h.shards[i] = &roomBucket{
@@ -173,6 +157,16 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 	go h.checkStaleClients()
 
 	return h
+}
+
+// RegisterHandler registers an EventHandler with the Hub's registry.
+func (h *Hub) RegisterHandler(handler EventHandler) {
+	h.registry.Register(handler)
+}
+
+// CallHandler returns the CallHandler instance of the Hub.
+func (h *Hub) CallHandler() *CallHandler {
+	return h.callHandler
 }
 
 func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
