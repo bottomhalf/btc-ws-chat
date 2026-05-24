@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func MeetingRouters(router *gin.Engine, container *configuration.Container) {
+func MeetingRouters(router *gin.RouterGroup, container *configuration.Container) {
 	// Placeholder for meeting-related route setup
 	meetingRoute := router.Group("/cf/api/meetings")
 	{

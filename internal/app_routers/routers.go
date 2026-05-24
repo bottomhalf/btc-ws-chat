@@ -81,10 +81,13 @@ func configureServer(container *configuration.Container, h *hub.Hub) *http.Serve
 		})
 	})
 
+	// API Versioning
+	v1 := router.Group("/v1")
+
 	// WebSocket route
 	// User connects once with userId, then subscribes to conversations dynamically
 	wsRoute := "/cf/meet/" + container.Config.ChatDatabase.SocketRoute
-	router.GET(wsRoute, func(c *gin.Context) {
+	v1.GET(wsRoute, func(c *gin.Context) {
 		userId := c.Query("userId")
 		if userId == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "userId is required"})
@@ -94,9 +97,9 @@ func configureServer(container *configuration.Container, h *hub.Hub) *http.Serve
 		h.ServeWS(c, userId)
 	})
 
-	UserRouters(router, container)
-	MeetingRouters(router, container)
-	MonitorRouters(router, container)
+	UserRouters(v1, container)
+	MeetingRouters(v1, container)
+	MonitorRouters(v1, container)
 
 	return &http.Server{
 		Addr:         fmt.Sprintf(":%d", container.Config.Server.SocketPort),

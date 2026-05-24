@@ -9,7 +9,7 @@ import (
 )
 
 // MonitorRouters sets up monitoring API routes
-func MonitorRouters(router *gin.Engine, container *configuration.Container) {
+func MonitorRouters(router *gin.RouterGroup, container *configuration.Container) {
 	// Create monitor service with hub reference
 	monitorService := hub.NewMonitorService(container.Hub)
 

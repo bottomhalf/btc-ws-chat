@@ -14,6 +14,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.uber.org/zap"
 )
@@ -26,6 +27,7 @@ type Container struct {
 
 	// private - for cleanup
 	mongoClient *mongo.Database
+	redisClient *redis.Client
 }
 
 func BuildContainer() (*Container, error) {
@@ -58,8 +60,15 @@ func BuildContainer() (*Container, error) {
 	userService := service.NewUserService(userRepo, messageRepo)
 	userHandler := handler.NewUserHandler(userService)
 
-	// Create Hub with repositories
-	Hub := hub.NewHub(messageRepo, conversationRepo, userRepo)
+	// Initialize Redis
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     config.Redis.Addr,
+		Password: config.Redis.Password,
+		DB:       config.Redis.DB,
+	})
+
+	// Create Hub with repositories and Redis
+	Hub := hub.NewHub(messageRepo, conversationRepo, userRepo, redisClient)
 
 	// Register message handlers
 	Hub.RegisterHandler(handlers.NewMarkDeliveredHandler(conversationRepo))
@@ -86,6 +95,7 @@ func BuildContainer() (*Container, error) {
 		Config:      *config,
 		Logger:      logger,
 		mongoClient: con,
+		redisClient: redisClient,
 	}, nil
 }
 
@@ -107,6 +117,13 @@ func (c *Container) Close() error {
 		defer cancel()
 		if err := c.mongoClient.Client().Disconnect(ctx); err != nil {
 			return fmt.Errorf("failed to close MongoDB connection: %w", err)
+		}
+	}
+
+	// Close Redis connection
+	if c.redisClient != nil {
+		if err := c.redisClient.Close(); err != nil {
+			return fmt.Errorf("failed to close Redis connection: %w", err)
 		}
 	}
 

@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func UserRouters(router *gin.Engine, container *configuration.Container) {
+func UserRouters(router *gin.RouterGroup, container *configuration.Container) {
 	// Placeholder for user-related route setup
 	userRoute := router.Group("/cf/api/users")
 	{

@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -25,6 +26,11 @@ const (
 	evictInterval = 5 * time.Minute  // How often to check for expired rooms
 	Direct        = "direct"
 	Group         = "group"
+
+	// Redis channel for global events or per-room?
+	// For simplicity, we use one global channel and broadcast to all instances.
+	// In a high-traffic system, you'd use per-room channels.
+	globalRedisChannel = "confeet_events"
 )
 
 type inboundMessage struct {
@@ -92,9 +98,13 @@ type Hub struct {
 	messageRepo      repo.MessageRepository
 	userRepository   repo.UserRepository
 	conversationRepo repo.ConversationRepository
+
+	// Redis for horizontal scaling
+	redisClient *redis.Client
+	instanceID  string
 }
 
-func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.ConversationRepository, userRepository repo.UserRepository) *Hub {
+func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.ConversationRepository, userRepository repo.UserRepository, redisClient *redis.Client) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
 		onlineUsers:      make(map[string]*Client),
@@ -105,6 +115,8 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 		messageRepo:      messageRepo,
 		userRepository:   userRepository,
 		conversationRepo: conversationRepo,
+		redisClient:      redisClient,
+		instanceID:       uuid.New().String(),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
@@ -156,7 +168,79 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 	// start heartbeat checker goroutine to remove stale clients
 	go h.checkStaleClients()
 
+	// Start Redis listener for cross-instance events
+	if h.redisClient != nil {
+		go h.listenToRedis()
+	}
+
 	return h
+}
+
+// Redis message wrapper to identify the sender instance
+type redisMessage struct {
+	SenderInstance string        `json:"sender_instance"`
+	Event          event.WsEvent `json:"event"`
+	ConversationID string        `json:"conversation_id,omitempty"`
+}
+
+func (h *Hub) listenToRedis() {
+	pubsub := h.redisClient.Subscribe(h.ctx, globalRedisChannel)
+	defer pubsub.Close()
+
+	log.Printf("Subscribed to Redis channel: %s", globalRedisChannel)
+
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case msg := <-ch:
+			var rm redisMessage
+			if err := json.Unmarshal([]byte(msg.Payload), &rm); err != nil {
+				log.Printf("failed to unmarshal redis message: %v", err)
+				continue
+			}
+
+			// Ignore messages from this instance
+			if rm.SenderInstance == h.instanceID {
+				continue
+			}
+
+			log.Printf("Received event %s from instance %s", rm.Event.Event, rm.SenderInstance)
+
+			// Handle the event locally
+			if rm.ConversationID != "" {
+				h.publishToRoomLocal(rm.Event, rm.ConversationID)
+			} else {
+				h.broadcastToAllLocal(rm.Event)
+			}
+		}
+	}
+}
+
+func (h *Hub) publishToRedis(ev event.WsEvent, conversationID string) {
+	if h.redisClient == nil {
+		return
+	}
+
+	rm := redisMessage{
+		SenderInstance: h.instanceID,
+		Event:          ev,
+		ConversationID: conversationID,
+	}
+
+	payload, err := json.Marshal(rm)
+	if err != nil {
+		log.Printf("failed to marshal redis message: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := h.redisClient.Publish(ctx, globalRedisChannel, payload).Err(); err != nil {
+		log.Printf("failed to publish to redis: %v", err)
+	}
 }
 
 // RegisterHandler registers an EventHandler with the Hub's registry.
@@ -242,8 +326,17 @@ func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
 	}
 }
 
-// publishToRoom sends message to all ONLINE members of a room
+// publishToRoom sends message to all members (local and cross-instance)
 func (h *Hub) publishToRoom(ev event.WsEvent, groupConversationID string) {
+	// 1. Deliver locally
+	h.publishToRoomLocal(ev, groupConversationID)
+
+	// 2. Deliver to other instances via Redis
+	h.publishToRedis(ev, groupConversationID)
+}
+
+// publishToRoomLocal sends message to all ONLINE members connected to THIS instance
+func (h *Hub) publishToRoomLocal(ev event.WsEvent, groupConversationID string) {
 	// Get the room from cache
 	room := h.GetRoom(groupConversationID)
 	if room == nil {
@@ -288,8 +381,17 @@ func (h *Hub) publishToRoom(ev event.WsEvent, groupConversationID string) {
 	log.Printf("message published to %d/%d members in room %s", len(onlineClients), len(memberIDs), groupConversationID)
 }
 
-// broadcastToAll sends an event to all ONLINE users connected to the hub
+// broadcastToAll sends an event to all ONLINE users (local and cross-instance)
 func (h *Hub) broadcastToAll(ev event.WsEvent) {
+	// 1. Deliver locally
+	h.broadcastToAllLocal(ev)
+
+	// 2. Deliver to other instances via Redis
+	h.publishToRedis(ev, "")
+}
+
+// broadcastToAllLocal sends an event to all ONLINE users connected to THIS instance
+func (h *Hub) broadcastToAllLocal(ev event.WsEvent) {
 	h.onlineUsersMu.RLock()
 	onlineClients := make([]*Client, 0, len(h.onlineUsers))
 	for _, client := range h.onlineUsers {
