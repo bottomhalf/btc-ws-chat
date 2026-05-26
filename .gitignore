@@ -8,22 +8,25 @@
 # Test binary, built with `go test -c`
 *.test
 
-# checksums of file tree
-.checksumgo
-
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
-livekit-server
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
-bin/
-proto/
 
-# Mac
-.DS_Store
+# Go workspace file
+go.work
+go.work.sum
 
-# IDE
+# Env files
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
 .idea/
 
-dist/
+# Custom binaries for this project
+/server
+/cmd/server/server
